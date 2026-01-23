@@ -122,11 +122,12 @@ async function extractRating(page) {
  */
 async function extractFeatures(page) {
   return page.evaluate(() => {
-    return Array.from(
+    const features = Array.from(
       document.querySelectorAll(
         '[data-testid="property-most-popular-facilities-wrapper"] li span span',
       ),
     ).map((span) => span.textContent.trim())
+    return [...new Set(features)]
   })
 }
 
@@ -169,11 +170,15 @@ async function extractRooms(page) {
         popup
           .querySelector('[data-testid="rp-room-size"] span.b99b6ef58f span')
           ?.textContent.trim() || ""
-      const amenities = Array.from(
-        popup.querySelectorAll(
-          '[data-testid="property-unit-facility-badge-icon"] span.beb5ef4fb4',
+      const amenities = [
+        ...new Set(
+          Array.from(
+            popup.querySelectorAll(
+              '[data-testid="property-unit-facility-badge-icon"] span.beb5ef4fb4',
+            ),
+          ).map((span) => span.textContent.trim()),
         ),
-      ).map((span) => span.textContent.trim())
+      ]
 
       const images = Array.from(
         new Set(
@@ -216,7 +221,7 @@ async function extractRooms(page) {
  */
 async function extractReviews(page) {
   return page.evaluate(() => {
-    return Array.from(
+    const reviews = Array.from(
       document.querySelectorAll('[data-testid="featuredreview"]'),
     ).map((review) => {
       const name =
@@ -231,9 +236,17 @@ async function extractReviews(page) {
         review
           .querySelector('[data-testid="featuredreview-text"] .b99b6ef58f')
           ?.textContent.trim()
-          .replace(/^«\s*|\s*»$/g, "") || ""
+          .replace(/^[\s“"«»""]+|[\s”"«»""]+$/g, "") || ""
 
       return { name, country, text }
+    })
+
+    // Deduplicate by review text
+    const seen = new Set()
+    return reviews.filter((review) => {
+      if (seen.has(review.text)) return false
+      seen.add(review.text)
+      return true
     })
   })
 }
@@ -271,7 +284,7 @@ async function extractNearbyPlaces(page) {
   return page.evaluate(() => {
     const poiBlocks = document.querySelectorAll('[data-testid="poi-block"]')
 
-    return Array.from(poiBlocks).flatMap((block) => {
+    const places = Array.from(poiBlocks).flatMap((block) => {
       const type =
         block.querySelector("h3 div")?.textContent.trim().toLowerCase() || ""
       const items = block.querySelectorAll('[data-testid="poi-block-list"] li')
@@ -288,6 +301,15 @@ async function extractNearbyPlaces(page) {
 
         return { place, distance, type }
       })
+    })
+
+    // Deduplicate by place name + distance
+    const seen = new Set()
+    return places.filter((item) => {
+      const key = `${item.place}|${item.distance}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
     })
   })
 }
@@ -314,43 +336,50 @@ async function extractHotelData(page, logStep) {
   }
 
   try {
-    logStep("Extracting hotel name")
-    hotelData.hotelName = await extractHotelName(page)
-    logStep("Hotel name extracted", { name: hotelData.hotelName })
+    logStep("Extracting data in parallel")
 
-    logStep("Extracting address")
-    hotelData.address = await extractAddress(page)
-    logStep("Address extracted", { address: hotelData.address })
+    // Run all independent extractions in parallel
+    const [
+      hotelName,
+      address,
+      description,
+      rating,
+      features,
+      reviews,
+      checkTimes,
+      nearbyPlaces,
+    ] = await Promise.all([
+      extractHotelName(page),
+      extractAddress(page),
+      extractDescription(page),
+      extractRating(page),
+      extractFeatures(page),
+      extractReviews(page),
+      extractCheckTimes(page),
+      extractNearbyPlaces(page),
+    ])
 
-    logStep("Extracting description")
-    hotelData.description = await extractDescription(page)
-    logStep("Description extracted", { length: hotelData.description.length })
+    hotelData.hotelName = hotelName
+    hotelData.address = address
+    hotelData.description = description
+    hotelData.rating = rating
+    hotelData.features = features
+    hotelData.reviews = reviews
+    hotelData.checkin = checkTimes.checkin
+    hotelData.checkout = checkTimes.checkout
+    hotelData.nearbyPlaces = nearbyPlaces
 
-    logStep("Extracting rating")
-    hotelData.rating = await extractRating(page)
-    logStep("Rating extracted", { rating: hotelData.rating })
+    logStep("Parallel extraction complete", {
+      hotelName: !!hotelName,
+      address: !!address,
+      features: features.length,
+      reviews: reviews.length,
+    })
 
-    logStep("Extracting features")
-    hotelData.features = await extractFeatures(page)
-    logStep("Features extracted", { count: hotelData.features.length })
-
+    // Rooms require UI interaction, extract separately
     logStep("Extracting rooms")
     hotelData.rooms = await extractRooms(page)
     logStep("Rooms extracted", { count: hotelData.rooms.length })
-
-    logStep("Extracting reviews")
-    hotelData.reviews = await extractReviews(page)
-    logStep("Reviews extracted", { count: hotelData.reviews.length })
-
-    logStep("Extracting check times")
-    const checkTimes = await extractCheckTimes(page)
-    hotelData.checkin = checkTimes.checkin
-    hotelData.checkout = checkTimes.checkout
-    logStep("Check times extracted", checkTimes)
-
-    logStep("Extracting nearby places")
-    hotelData.nearbyPlaces = await extractNearbyPlaces(page)
-    logStep("Nearby places extracted", { count: hotelData.nearbyPlaces.length })
 
     return hotelData
   } catch (error) {

@@ -32,17 +32,21 @@ async function autoScroll(page) {
   await page.evaluate(async () => {
     await new Promise((resolve) => {
       let totalHeight = 0
-      const distance = 100
+      const distance = 500
+      const maxTime = 2000 // 2 second cap
+      const startTime = Date.now()
+
       const timer = setInterval(() => {
         const scrollHeight = document.body.scrollHeight
         window.scrollBy(0, distance)
         totalHeight += distance
 
-        if (totalHeight >= scrollHeight) {
+        const elapsed = Date.now() - startTime
+        if (totalHeight >= scrollHeight || elapsed >= maxTime) {
           clearInterval(timer)
           resolve()
         }
-      }, 100)
+      }, 50)
     })
   })
 

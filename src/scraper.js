@@ -73,9 +73,9 @@ async function loadDynamicContent(page, logStep) {
 
   for (const tab of tabs) {
     try {
-      await page.waitForSelector(tab.selector, { timeout: 5000 })
+      await page.waitForSelector(tab.selector, { timeout: 3000 })
       await page.click(tab.selector)
-      await delay(2000)
+      await delay(500)
     } catch (err) {
       logStep(`Could not click ${tab.name} tab`, { error: err.message })
     }
@@ -180,7 +180,7 @@ async function scrapeHotelData(url) {
     // Navigate to URL
     addStep("Navigating to URL", { url })
     const response = await page.goto(url, {
-      waitUntil: "networkidle2",
+      waitUntil: "domcontentloaded",
       timeout: config.navigationTimeout,
     })
 
@@ -190,6 +190,18 @@ async function scrapeHotelData(url) {
 
     const status = response.status()
     addStep("Response received", { status, url: page.url() })
+
+    // Wait for critical content to be present
+    await page
+      .waitForSelector(
+        'h2.d2fee87262, [data-testid="title"], #hp_hotel_name',
+        {
+          timeout: 10000,
+        },
+      )
+      .catch(() => {
+        addStep("Warning: Could not find hotel title selector, continuing anyway")
+      })
 
     // Check HTTP status
     if (status !== 200) {
@@ -243,7 +255,7 @@ async function scrapeHotelData(url) {
     // Extract data
     addStep("Extracting data")
     const hotelData = await extractHotelData(page, addStep)
-    hotelData.galleryImages = galleryImages
+    hotelData.galleryImages = [...new Set(galleryImages)]
 
     addStep("Extraction complete", {
       dataFields: Object.keys(hotelData),
